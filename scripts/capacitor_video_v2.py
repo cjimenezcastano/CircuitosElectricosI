@@ -118,10 +118,6 @@ def point_on_path(pts, u):
     return pts[-1]
 
 
-def path_length(pts):
-    return sum(np.linalg.norm(pts[i + 1] - pts[i]) for i in range(len(pts) - 1))
-
-
 def fringe(cx, cy, w, d, color=FIELD, sw=2.5):
     """Líneas de campo de borde (curvas) a ambos lados."""
     yTi = cy + d / 2 - TH / 2 - 0.05
@@ -363,7 +359,14 @@ class CapacitorVideo(m.Scene):
 
         self.play(m.Create(wires), m.FadeIn(cap["top"]), m.FadeIn(cap["bot"]), m.FadeIn(bat), m.FadeIn(lbl_v),
                   run_time=1.8)
-        self.pie("Al cerrar el circuito, la batería mueve electrones de la placa superior a la inferior")
+        # El campo de la fuente se establece en los cables casi a la velocidad de la luz
+        ruta_sup = [np.array(p, float) for p in [(XBAT, 0.4, 0), (XBAT, yT, 0), (xe, yT, 0)]]
+        ruta_inf = [np.array(p, float) for p in [(XBAT, 0.0, 0), (XBAT, yB, 0), (xe, yB, 0)]]
+        frentes = [m.VMobject(color=FIELD, stroke_width=10).set_points_as_corners(r) for r in (ruta_sup, ruta_inf)]
+        self.pie("Al cerrar el circuito, el campo de la fuente se establece en los cables casi de inmediato")
+        self.play(*[m.ShowPassingFlash(f, time_width=0.5) for f in frentes], run_time=1.0)
+        self.play(*[m.ShowPassingFlash(f.copy(), time_width=0.5) for f in frentes], run_time=1.0)
+        self.pie("Ese campo redistribuye la carga localmente: no hay electrones viajando de placa a placa")
 
         for i, g in enumerate(cap["plus"]):
             g.add_updater(lambda g, i=i: g.set_opacity(float(np.clip(qT.get_value() * n - i, 0, 1))))
@@ -375,22 +378,23 @@ class CapacitorVideo(m.Scene):
         frg.add_updater(lambda g: g.set_stroke(opacity=0.65 * float(qT.get_value())))
         self.add(*cap["plus"], *cap["minus"], arrows, frg)
 
-        ruta = [np.array(p, float) for p in [
-            (xe, yT, 0), (XBAT, yT, 0), (XBAT, 0.4, 0), (XBAT, 0.0, 0), (XBAT, yB, 0), (xe, yB, 0)]]
-        N = 9
-        dots = m.VGroup(*[m.Dot(radius=0.075, color=NEG) for _ in range(N)])
-        fase = {"u": 0.0}
+        # Electrones de conducción en los cables: cada uno se corre apenas una fracción del espaciado
+        N = 6
+        corrimiento = 0.4 / N
 
-        def mover(grp, dt):
-            q = float(qT.get_value())
-            op = 0.0 if q > 0.985 else 1.0
-            largo = path_length(ruta)
-            fase["u"] = (fase["u"] + dt * 2.6 * (1 - q) / largo) % 1.0
-            for k, dd in enumerate(grp):
-                dd.move_to(point_on_path(ruta, k / N + fase["u"]))
-                dd.set_opacity(op)
+        def electrones(ruta, signo):
+            grp = m.VGroup(*[m.Dot(radius=0.075, color=NEG) for _ in range(N)])
 
-        dots.add_updater(mover)
+            def mover(g):
+                du = signo * corrimiento * float(qT.get_value())
+                for k, dd in enumerate(g):
+                    dd.move_to(point_on_path(ruta, (k + 0.5) / N + du))
+
+            grp.add_updater(mover)
+            return grp
+
+        # arriba se alejan de la placa (queda +q); abajo se acercan a la placa (queda −q)
+        dots = m.VGroup(electrones(ruta_sup, -1), electrones(ruta_inf, +1))
 
         def lectura():
             return T(f"Tensión del capacitor:  v = {coma(qT.get_value() * V0)} V", 26, GRAY).move_to([CX, -2.2, 0])
@@ -398,6 +402,8 @@ class CapacitorVideo(m.Scene):
         self.add(dots, m.always_redraw(lectura))
         carga = lambda t: (1 - np.exp(-4 * t)) / (1 - np.exp(-4))
         self.play(qT.animate.set_value(1), run_time=8, rate_func=carga)
+        self.pie("Cada electrón apenas se desplaza (deriva de ~mm/s): lo que viaja rápido es el campo", 24)
+        self.wait(2.5)
 
         qm = T("+q", 30, POS).move_to([CX, yT + 0.5, 0])
         qn = T("−q", 30, NEG).move_to([CX, yB - 0.5, 0])
